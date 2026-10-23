@@ -1,0 +1,27 @@
+{
+  "name": "opentable-guestcenter-api",
+  "version": "1.0.0",
+  "description": "Reverse-engineered API documentation for OpenTable's GuestCenter restaurant management platform.",
+  "main": "index.js",
+  "scripts": {
+    "bot": "node bot.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/guillermomeana-coder/opentable-guestcenter-api.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/guillermomeana-coder/opentable-guestcenter-api/issues"
+  },
+  "homepage": "https://github.com/guillermomeana-coder/opentable-guestcenter-api#readme",
+  "dependencies": {
+    "dotenv": "^18.0.9",
+    "node-telegram-bot-api": "^2.1.0",
+    "playwright": "^1.64.1"
+  }
+}

@@ -1,0 +1,10 @@
+node_modules/
+.env
+captures/
+.playwright-mcp/
+.ot-session/
+.ot-bot-session/
+.ot-bot-session2/
+.ot-bot-session3/
+.ot-browser-data/
+.cookies.json
