@@ -539,14 +539,72 @@ Aggregates reviews from **Google**, **OpenTable**, and **TripAdvisor** in a sing
 | GET | `availabilityPlanningBff/api/restaurants/{rid}/errorNotifications` | Availability errors |
 | GET | `restops-ap/availabilityPlanningBff/api/restaurants/{rid}/privateDiningPartners` | Private dining partners |
 | GET | `restops-ap/availabilityPlanningBff/api/v2/restaurants/{rid}/diningAreas` | Dining areas/sections |
+| GET | `/api/availabilityPlanning/restaurants/{rid}` | Main AP config (locale, timezone, publishStatus) |
+| GET | `/api/availabilityPlanning/restaurants/{rid}/features` | AP features (waitlist, ticketed, private dining) |
+| GET | `/api/availabilityPlanning/restaurants/{rid}/settings` | AP settings (bookingInterval, largePartyMinSize, bookingWindow) |
+| GET | `/api/availabilityPlanning/restaurants/{rid}/shifts/{shiftId}/experiences` | Shift experiences config |
+| GET | `/setup/api/v2/restaurant/{rid}/shifts` | Shifts v2 (full shift data) |
+| GET | `/setup/api/restaurant/{rid}/floorplan` | Floor plan (table positions, sections) |
+| GET | `/setup/api/restaurant/{rid}/override/calendar/{startDate},{endDate}` | Override calendar (closures) |
+| GET | `/setup/api/restaurant/{rid}/settings?locale=en-US` | Restaurant settings |
+| GET | `/setup/api/restaurant/{rid}/payments` | Payment settings |
+| GET | `aggregator/restaurantActiveStatus/{rid}` | Restaurant active status |
+
+### Marketing
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `marketing/promotedInventoryService/v1/campaigns?rid={rid}` | All campaigns |
+| GET | `marketing/promotedInventoryService/v1/restaurants/{rid}/campaigns-with-insight` | Campaigns with performance insights |
+| GET | `marketing/promotedInventoryService/v2/restaurants/{rid}/flexible-pricing-visibility-settings` | Flexible pricing settings |
+| GET | `marketing/promotedInventoryService/v1/restaurants/{rid}/product-cover-estimates` | Cover estimates per product |
+| GET | `marketing/promotedInventoryService/v1/restaurants/{rid}/bonus-points-prices` | Bonus points pricing |
+| GET | `marketing/promotedInventoryService/v2/restaurants/{rid}/pricing-tiers` | Pricing tiers |
+| GET | `marketing/promotedInventoryService/v1/restaurants/{rid}/promoted-inventory-properties` | Promo status flags |
+| GET | `marketing/promotedInventoryService/v1/restaurants/{rid}/self-serve-boost-products` | Self-serve boost products |
+| GET | `marketing/promotedInventoryService/v1/restaurants/{rid}/roi-calculation-settings` | ROI calculation settings |
+| GET | `marketing/promotedInventoryService/v2/restaurants/{rid}/aggregated-insights-data` | Aggregated marketing insights |
+| GET | `marketing/promotedInventoryService/v2/suppressiondates` | Global suppression dates |
+| GET | `marketing/promotedInventoryService/v1/restaurants/{rid}/suppressiondates` | Restaurant suppression dates |
+| GET | `marketing/restaurantDataService/restaurant-data/v1/restaurants/rid/{rid}` | Restaurant marketing data |
+| GET | `marketing/salesforceProxy/salesforce-data/v1/accounts/rid/{rid}` | Salesforce account data |
+
+### Profile Management
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `partner/cuisine/v6/cuisines` | All cuisine types |
+| GET | `restaurantService/v10/raw/restaurants/{rid}` | Raw restaurant data |
+| GET | `gca-profile/restaurantMenuService/v2/restaurants/{rid}/menus` | Menu data |
+| GET | `photoMetadataService/gca/photos/restaurants/{rid}` | All photo metadata |
+| GET | `photoMetadataService/gca/photos/restaurants/{rid}/profile` | Profile photo metadata |
 
 ### Messaging
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `gc-inbox/gcDmService/v2/restaurants/{rid}/context` | Messaging context |
-| GET | `gc-inbox/gcDmService/v2/restaurants/{rid}/conversation/info?sixMonthFilter=true` | Conversation list |
-| GET | `gc-inbox/gcDmService/v2/restaurants/{rid}/conversation/confirmation/{confirmationNumber}` | Confirmation messages |
+| GET | `gc-inbox/gcDmService/v2/restaurants/{rid}/conversation/info?sixMonthFilter=true` | Conversation summary |
+| GET | `gc-inbox/gcDmService/v3/restaurants/{rid}/conversations/info` | Conversations v3 (totals by type: reservation, waitlist, notify) |
+| GET | `gc-inbox/gcDmService/v2/restaurants/{rid}/conversation?limit=25&offset=0&processingStatus=...` | Conversation list with messages |
+| GET | `gc-inbox/gcDmService/v2/restaurants/{rid}/conversation/confirmation/{confirmationNumber}` | Messages by confirmation number |
+| GET | `gc-inbox/gcDmService/v1/premium-communications/restaurants/{rid}/eligibility` | Premium comms eligibility |
+| GET | `gc-inbox/gcDmService/v1/premium-communications/restaurants/{rid}/upsell` | Upsell content |
+
+### Integrations
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `ix-marketplace/integrationStatusAggregatorService/integrations/restaurant/{rid}/allIntegrations` | All integrations status |
+| GET | `ix-marketplace/partnerRestaurant/api/v1/integrations/partner/list` | Partner integrations list (60+) |
+| GET | `restops-ap/integrationStatusAggregatorService/integrations/restaurant/{rid}/integration/tripleseat` | Tripleseat status |
+
+### Settings
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `hospitality/entitlements/entitlement-status/v1/entitlements/restaurant/{rid}` | Hospitality entitlements (57 entries) |
+| GET | `restaurant-settings/restaurantMessages/v2/{rid}/booking-policy-summaries` | Booking policy summaries |
 
 ### Slot Locking (Online Bookings)
 
@@ -572,6 +630,9 @@ Used for online/deposit bookings. Not required for internal (`Origin: "PHONE"`) 
 |--------|----------|-------------|
 | GET | `accounts/gums/api/v1/restaurants/{rid}/users/{uid}?include_related_profiles=true` | User details |
 | POST | `accounts/gums/api/v1/users/search` | Search users |
+| GET | `accounts/gums/api/v1/restaurants/{rid}/permissions` | All permissions |
+| GET | `accounts/gums/api/v2/restaurants/{rid}/roles` | All roles |
+| GET | `accounts/gums/api/v1/users/states/config` | User state machine (pending/active/locked transitions) |
 
 ### Private Dining / Events
 
@@ -609,19 +670,55 @@ Each referrer/concierge object from the referrers list:
 
 **Note:** When assigning a referrer to a reservation, use `GlobalPersonId` as the `Id` field.
 
+### Auth Flow
+
+The full OAuth/OIDC login flow for automating GuestCenter access:
+
+1. `GET oidc-bootstrap/generations/ignition/clientType/web` — Get OIDC config
+2. `GET restauth.opentable.com/oauth2/default/.well-known/openid-configuration` — OIDC discovery
+3. `POST restauth.opentable.com/api/v1/internal/device/nonce` — Device auth
+4. `POST restauth.opentable.com/idp/idx/introspect` — Session introspect
+5. `POST restauth.opentable.com/idp/idx/identify` — Submit credentials
+6. `POST restauth.opentable.com/idp/idx/challenge/answer` — MFA/challenge
+7. `POST restauth.opentable.com/oauth2/default/v1/token` — Get OAuth token
+8. `POST gc-cookie-exchange` — Exchange OAuth token for session cookies
+
+**Note:** hCaptcha may be triggered during login (`api.hcaptcha.com/checksiteconfig`).
+
 ## GuestCenter Sections
 
 | Section | URL Path | Key Endpoints |
 |---------|----------|---------------|
-| Home | `/home` | performance-homepage, schedule, notifications |
+| Home | `/home` | performance-homepage, schedule, notifications, reviewsummary |
 | Reservations | `/front-of-house/reservations/{date}` | bulk-sync, initial-sync, guest profiles |
+| Waitlist | `/front-of-house/waitlist` | waitlist parties sync |
+| Floor Plan | `/front-of-house/floor-plan` | venue tables, sync |
 | Guestbook | `/front-of-house/gm/guestbook` | guest profiles bulk |
-| Reporting | `/reporting/cover-trends` | cover-trends-report, reporting-metadata |
-| Marketing | `/marketing/insights` | cover-trends, reservations/summary |
+| Referrals | `/front-of-house/gm/referrals` | referrer management |
+| Guest Tags | `/front-of-house/gm/guest-tags` | tag configuration |
+| Reporting | `/reporting/cover-trends` | cover-trends-report, benchmarking |
+| Server Perf | `/reporting/server-performance` | benchmarking data |
+| Shift Summary | `/reporting/shift-summary` | shift reporting |
+| Cancellations | `/reporting/cancellation-report` | cancellation data |
+| No Shows | `/reporting/no-shows` | no-show data |
+| Reservation Detail | `/reporting/reservation-detail` | reservation reporting |
+| Marketing | `/marketing/insights` | promotedInventory, cover-trends, campaigns |
+| Campaigns | `/marketing/campaigns` | campaigns-with-insight |
+| Experiences | `/marketing/experiences` | experience types admin |
 | Reviews | `/feedback/reviews` | feedback reviews summary/details |
-| Profile | `/profile/basic-information` | restaurantGroupService |
-| Inventory | `/inventory#/shift` | availabilityPlanningBff, diningAreas |
-| Accounts | `/accounts/user-directory` | gums users |
+| Profile | `/profile/basic-information` | restaurantService, cuisines, menus, photos |
+| Profile Photos | `/profile/photos` | photoMetadataService |
+| Profile Menu | `/profile/menu` | restaurantMenuService |
+| Inventory | `/inventory#/shift` | availabilityPlanning, shifts, floorplan |
+| Accounts | `/accounts/user-directory` | gums users, permissions, roles |
+| Settings | `/restaurant-settings/general` | restaurant settings, languages |
+| Payments | `/restaurant-settings/payments` | payment configuration |
+| Guest Comms | `/restaurant-settings/guest-communications` | guest communication settings |
+| Policies | `/restaurant-settings/policies` | booking policies |
+| Integrations | `/integrations/all-integrations/all` | all integration statuses |
+| Private Dining | `/private-dining/inquiries` | event dining |
+| PD Products | `/private-dining/products` | private dining products |
+| Inbox | `/inbox` | conversations, messages, premium comms |
 
 ## Contributing
 

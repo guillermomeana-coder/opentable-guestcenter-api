@@ -148,6 +148,50 @@ async function guestProfile(gid) {
   return r.s === 200 ? r.d : null;
 }
 
+async function checkAvailability(date, pax) {
+  const r = await ot(`fohAggregator/v4/${RID}/detailedAvailability`, {
+    method: 'POST', body: { date, partySize: pax, accessRuleIds: [], bookingChannel: 'InHouse' }
+  });
+  return r.s === 200 ? r.d : null;
+}
+
+async function getStaff() {
+  const r = await ot(`gcFohWeb/api/${RID}/restaurantParticipants`);
+  return r.s === 200 ? r.d : [];
+}
+
+async function getReviews(limit = 5) {
+  const r = await ot(`hospitality/ot4rFeedbackService/api/v1/feedback/restaurant/${RID}/reviews/details`, {
+    method: 'POST', body: { pageNumber: 0, limit, sortBy: 'newest' }
+  });
+  return r.s === 200 ? r.d : null;
+}
+
+async function getReviewsSummary() {
+  const r = await ot(`hospitality/ot4rFeedbackService/api/v1/feedback/restaurant/${RID}/reviews/summary`, {
+    method: 'POST', body: {}
+  });
+  return r.s === 200 ? r.d : null;
+}
+
+async function getConversations() {
+  const r = await ot(`gc-inbox/gcDmService/v2/restaurants/${RID}/conversation?limit=25&offset=0&processingStatus=New%2CInProgress&showAllSourceTypes=true`);
+  return r.s === 200 ? r.d : null;
+}
+
+async function getResRange(startDate, endDate) {
+  // Get reservations across multiple days
+  const all = [];
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+    const dateStr = d.toISOString().substring(0, 10);
+    const dayRes = await getRes(dateStr);
+    all.push(...dayRes.map(r => ({ ...r, _date: dateStr })));
+  }
+  return all;
+}
+
 // --- Claude NLP ---
 async function nlp(msg, context = null) {
   const today = todayStr();
@@ -168,7 +212,7 @@ Hoy=${dow} ${today}. Horario 17:00-21:30 c/15min. MST UTC-7.
 ${contextMsg}
 
 Responde SOLO JSON puro (sin markdown, sin backticks):
-{"action":"create|cancel|modify|search|list|confirm|reject|correct","guestName":null,"partySize":null,"date":"YYYY-MM-DD"|null,"time":"HH:MM"|null,"concierge":null,"notes":null,"reservationId":null,"missing":[],"clarification":null,"corrections":null}
+{"action":"create|cancel|modify|search|list|confirm|reject|correct|availability|reviews|assign_concierge|week|messages|profile","guestName":null,"partySize":null,"date":"YYYY-MM-DD"|null,"endDate":null,"time":"HH:MM"|null,"concierge":null,"notes":null,"reservationId":null,"missing":[],"clarification":null,"corrections":null}
 
 Reglas:
 - viernes=proximo viernes desde hoy. manana=dia siguiente. "el 4 de noviembre"="2026-11-04"
@@ -181,6 +225,12 @@ Reglas:
 - "si"/"dale"/"va"/"confirma"/"ok"/"sale" → confirm
 - "no"/"mejor no"/"cancela eso"/"olvidalo" → reject
 - Si corrige algo ("no, son 4 personas" / "a las 9 mejor"): action=correct, corrections={"partySize":4} o {"time":"21:00"}
+- "disponibilidad"/"hay lugar"/"espacios" → availability (necesita date + pax)
+- "reviews"/"reseñas"/"calificaciones"/"como nos va" → reviews
+- "asigna concierge"/"pon referido"/"agrega concierge" a reserva existente → assign_concierge (necesita guestName + concierge)
+- "semana"/"esta semana"/"proximos dias" → week (lista reservas de 7 dias)
+- "mensajes"/"inbox"/"conversaciones" → messages
+- "perfil de X"/"historial de X"/"datos de X" → profile
 - SIEMPRE intenta parsear. Solo clarification si falta algo critico.`,
       messages: [{ role: 'user', content: msg }]
     })
@@ -195,7 +245,7 @@ Reglas:
 // --- Handlers ---
 async function handle(chatId, text) {
   if (!text || text === '/start') {
-    return '🟢 Bot Kitchen OT\n\nEscribime en lenguaje natural:\n\n• "reserva Juan Perez 4 pax viernes 8pm"\n• "reservas de hoy"\n• "que hay para el sabado"\n• "cancela la reserva de Katy"\n• "mueve a Juan a las 9pm"\n• "busca cliente Maria"';
+    return '🟢 Bot Kitchen OT v3\n\nEscribime lo que sea:\n\n📋 Reservas:\n• "reserva Juan 4 pax viernes 8pm"\n• "reservas de hoy" / "semana"\n• "cancela la de Katy"\n• "mueve a Juan a las 9pm"\n\n🔍 Info:\n• "busca Maria" / "perfil de Juan"\n• "hay lugar viernes 8pm para 6?"\n• "asigna concierge Palmilla a Katy"\n\n📊 Dashboard:\n• "reviews" / "mensajes"';
   }
 
   // Check if there's a pending confirmation
@@ -241,6 +291,12 @@ async function processAction(chatId, p) {
     case 'modify': return await hModify(chatId, p);
     case 'list': return await hList(p);
     case 'search': return await hSearch(p);
+    case 'availability': return await hAvailability(p);
+    case 'reviews': return await hReviews(p);
+    case 'assign_concierge': return await hAssignConcierge(chatId, p);
+    case 'week': return await hWeek(p);
+    case 'messages': return await hMessages(p);
+    case 'profile': return await hProfile(p);
     default: return p.clarification || '❓ Ej: "reserva Juan 4 pax viernes 8pm"';
   }
 }
@@ -271,6 +327,17 @@ async function hCreate(chatId, p) {
         `${i+1}. ${x.first_name} ${x.last_name} - ${x.email || x.phone_numbers?.[0]?.number || 'sin datos'}`
       ).join('\n');
       return `🔍 Hay ${gs.length} "${p.guestName}":\n${list}\n\n¿Cual? Dame nombre completo o numero.`;
+    }
+  }
+
+  // Check availability (informational — we can always overbook for internal)
+  const avail = await checkAvailability(p.date, p.partySize);
+  let availInfo = '';
+  if (avail) {
+    const slots = avail.timeSlots || avail.slots || [];
+    const requestedSlot = slots.find(s => (s.time || s.timeIso?.substring(11, 16)) === p.time);
+    if (requestedSlot && requestedSlot.isAvailable === false) {
+      availInfo = `⚠️ Horario ${p.time} sin disponibilidad standard — se creara como sobrerreserva\n`;
     }
   }
 
@@ -319,6 +386,7 @@ async function hCreate(chatId, p) {
   };
 
   const summary = [
+    availInfo,
     p._dupeWarning || '',
     `👤 ${g.first_name} ${g.last_name}`,
     `📅 ${p.date} a las ${p.time}`,
@@ -436,6 +504,16 @@ async function executePending(pending) {
       }
       return `❌ Error: ${r.s}`;
     }
+    case 'assign_concierge': {
+      const d = pending.data;
+      const ref = d.referrer;
+      const r = await updateRes(d.reservationId, {
+        Referrer: { Id: ref.GlobalPersonId, FirstName: ref.FirstName, LastName: ref.LastName, CompanyName: ref.CompanyName, PhoneNumber: ref.PhoneNumbers?.[0], Email: ref.Email }
+      });
+      return r.s === 200
+        ? `✅ Concierge asignado #${d.confirmNum}\n👤 ${d.guest}\n🏨 ${ref.FirstName} ${ref.LastName} (${ref.CompanyName})`
+        : `❌ Error: ${r.s}`;
+    }
   }
 }
 
@@ -476,6 +554,131 @@ async function hSearch(p) {
     lines.push(`👤 ${g.first_name} ${g.last_name}\n   📞 ${g.phone_numbers?.[0]?.number||'-'} | ✉️ ${g.email||'-'}\n   📊 ${pr?.insights?.visits||0} visitas, ${pr?.insights?.cancellations||0} cancel`);
   }
   return `🔍 "${p.guestName}":\n\n${lines.join('\n\n')}`;
+}
+
+// --- Availability ---
+async function hAvailability(p) {
+  const date = p.date || todayStr();
+  const pax = p.partySize || 2;
+  const avail = await checkAvailability(date, pax);
+  if (!avail) return '❌ Error obteniendo disponibilidad';
+
+  const slots = avail.timeSlots || avail.slots || [];
+  if (!slots.length) return `📋 Sin disponibilidad para ${date} (${pax} pax).\nPero podemos sobrerreservar si querés.`;
+
+  const times = slots.filter(s => s.isAvailable !== false).map(s => s.time || s.timeIso?.substring(11, 16)).filter(Boolean);
+  return `📋 Disponibilidad ${date} (${pax} pax):\n\n${times.length ? times.join(', ') : 'Sin horarios libres'}\n\nTotal slots: ${slots.length}`;
+}
+
+// --- Reviews ---
+async function hReviews(p) {
+  const summary = await getReviewsSummary();
+  if (!summary) return '❌ Error obteniendo reviews';
+
+  const details = await getReviews(5);
+  const recent = (details?.data || []).slice(0, 5);
+
+  let msg = `⭐ Reviews Kitchen\n\n` +
+    `📊 ${summary.totalCount || 0} reviews | ${(summary.averageOverallRating || 0).toFixed(1)} overall\n` +
+    `🍽️ Food: ${(summary.otFoodRatingAvg || 0).toFixed(1)} | 🙋 Service: ${(summary.otServiceRatingAvg || 0).toFixed(1)}\n` +
+    `✨ Ambiance: ${(summary.otAmbianceRatingAvg || 0).toFixed(1)} | 💰 Value: ${(summary.otValueRatingAvg || 0).toFixed(1)}\n` +
+    `⭐⭐⭐⭐⭐ ${summary.fiveStarCount || 0} | ⭐⭐⭐⭐ ${summary.fourStarCount || 0} | ⭐⭐⭐ ${summary.threeStarCount || 0} | ⭐⭐ ${summary.twoStarCount || 0} | ⭐ ${summary.oneStarCount || 0}`;
+
+  if (recent.length) {
+    msg += '\n\nUltimas:';
+    for (const r of recent) {
+      const stars = '⭐'.repeat(Math.round(r.overallRating || 0));
+      const source = r.source === 'Google' ? '🔍' : r.source === 'TripAdvisor' ? '🦉' : '🍽️';
+      msg += `\n${source} ${stars} ${r.guestName || 'Anonimo'} (${r.reviewDate?.substring(0, 10)})`;
+      if (r.comment) msg += `\n   "${r.comment.substring(0, 80)}${r.comment.length > 80 ? '...' : ''}"`;
+    }
+  }
+
+  return msg;
+}
+
+// --- Assign Concierge to existing reservation ---
+async function hAssignConcierge(chatId, p) {
+  if (!p.guestName) return '❓ ¿A que reserva le asigno el concierge? Dame nombre.';
+  if (!p.concierge) return '❓ ¿Que concierge/hotel? Dame nombre.';
+
+  const date = p.date || todayStr();
+  const res = await getRes(date);
+  const m = res.filter(x => x.GuestDescription?.toLowerCase().includes(p.guestName.toLowerCase()));
+  if (!m.length) return `❌ No encontre "${p.guestName}" para ${date}`;
+  if (m.length > 1) return `🔍 ${m.length} reservas:\n${m.map(x => `• #${x.ConfirmationNumber} ${x.ScheduledLocal?.substring(11, 16)}`).join('\n')}\n\n¿Cual?`;
+
+  const r = m[0];
+  const refs = await searchReferrer(p.concierge);
+  if (!refs.length) return `❌ No encontre concierge "${p.concierge}"`;
+
+  const ref = refs[0];
+  const summary = `👤 ${r.GuestDescription} (#${r.ConfirmationNumber})\n🏨 → ${ref.FirstName} ${ref.LastName} (${ref.CompanyName})`;
+  pendingAction[chatId] = {
+    type: 'assign_concierge',
+    data: { reservationId: r.ReservationId, confirmNum: r.ConfirmationNumber, guest: r.GuestDescription, referrer: ref },
+    summary
+  };
+  return `🏨 Asignar concierge:\n\n${summary}\n\n¿Confirmo? (si/no)`;
+}
+
+// --- Week view ---
+async function hWeek(p) {
+  const start = p.date || todayStr();
+  const startD = new Date(start);
+  const endD = new Date(startD);
+  endD.setDate(endD.getDate() + 6);
+  const end = endD.toISOString().substring(0, 10);
+
+  let totalRes = 0, totalPax = 0;
+  let lines = [];
+
+  for (let d = new Date(startD); d <= endD; d.setDate(d.getDate() + 1)) {
+    const dateStr = d.toISOString().substring(0, 10);
+    const dayName = ['Dom', 'Lun', 'Mar', 'Mie', 'Jue', 'Vie', 'Sab'][d.getDay()];
+    const res = await getRes(dateStr);
+    const pax = res.reduce((s, r) => s + (r.PartySize || 0), 0);
+    totalRes += res.length;
+    totalPax += pax;
+    const bar = '█'.repeat(Math.min(res.length, 20));
+    lines.push(`${dayName} ${dateStr.substring(5)}: ${res.length} res (${pax} pax) ${bar}`);
+  }
+
+  return `📅 Semana ${start} → ${end}\n\n${lines.join('\n')}\n\n📊 Total: ${totalRes} reservas, ${totalPax} pax`;
+}
+
+// --- Messages/Inbox ---
+async function hMessages(p) {
+  const convos = await getConversations();
+  if (!convos?.conversations?.length) return '📬 Sin mensajes pendientes';
+
+  const lines = convos.conversations.slice(0, 10).map(c => {
+    const t = c.messageThread;
+    const msg = t.newestMessage?.body || '';
+    return `📨 #${t.confirmationNumber} — ${msg.substring(0, 60)}${msg.length > 60 ? '...' : ''}`;
+  });
+
+  return `📬 Mensajes (${convos.conversations.length} total):\n\n${lines.join('\n')}`;
+}
+
+// --- Guest Profile ---
+async function hProfile(p) {
+  if (!p.guestName) return '❓ ¿De quien queres el perfil?';
+  const gs = await searchGuest(p.guestName);
+  if (!gs.length) return `❌ No encontre "${p.guestName}"`;
+
+  const g = gs[0];
+  const pr = await guestProfile(g.guest_id);
+  if (!pr) return `👤 ${g.first_name} ${g.last_name}\n📞 ${g.phone_numbers?.[0]?.number || '-'}\n✉️ ${g.email || '-'}`;
+
+  const notes = (pr.notes || []).map(n => `  ${n.categories?.join(',')}: ${n.value}`).join('\n') || 'Sin notas';
+  const tags = (pr.tags || []).map(t => t.name || t).join(', ') || 'Sin tags';
+
+  return `👤 ${g.first_name} ${g.last_name}\n` +
+    `📞 ${g.phone_numbers?.[0]?.number || '-'} | ✉️ ${g.email || '-'}\n` +
+    `📊 ${pr.insights?.visits || 0} visitas | ${pr.insights?.cancellations || 0} cancel | ${pr.insights?.noShows || 0} no-show\n` +
+    `🏷️ ${tags}\n` +
+    `📝 Notas:\n${notes}`;
 }
 
 // --- Daily Notifications ---
@@ -525,9 +728,8 @@ async function sendDailySummary(title) {
 
 // --- Helpers ---
 function todayStr() {
-  const d = new Date();
-  d.setHours(d.getHours() + OT_TZ - d.getTimezoneOffset() / 60);
-  return d.toISOString().substring(0, 10);
+  // Get current date in BCS timezone (America/Mazatlan, UTC-7)
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Mazatlan' });
 }
 
 function toUTC(date, time) {
@@ -573,6 +775,6 @@ function toUTC(date, time) {
   };
 
   console.log('[TG] Bot listo!');
-  await tgSend(CHAT_ID, `🟢 Bot Kitchen OT v2\n🏨 ${refs.length} concierges\n⏰ Notificaciones: 4pm + 12am BCS\n\nEscribime lo que sea:\n• "reserva Juan Perez 4 pax viernes 8pm"\n• "reservas de hoy"\n• "cancela la de Katy"\n• "busca Maria"`);
+  await tgSend(CHAT_ID, `🟢 Bot Kitchen OT v3\n🏨 ${refs.length} concierges\n⏰ Notificaciones: 4pm + 12am BCS\n\nEscribime lo que sea:\n• "reserva Juan 4 pax viernes 8pm"\n• "reservas de hoy" / "semana"\n• "cancela la de Katy" / "mueve a las 9"\n• "reviews" / "mensajes" / "busca Maria"\n• "hay lugar sabado 8pm para 6?"`);
   poll();
 })();
