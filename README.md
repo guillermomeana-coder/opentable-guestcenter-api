@@ -50,8 +50,20 @@ All endpoints below are relative to this base URL unless otherwise noted.
 | GET | `gcrestaurant/api/aggregatedrestaurants/{rid}` | Aggregated restaurant data |
 | GET | `gcrestaurant/setup/api/restaurant/{rid}/lockout` | Lockout status |
 | GET | `featureManager/v3/api/restaurant/{rid}/toggles` | Feature flags |
+| GET | `featureManager/v3/api/globalToggle/{toggleName}` | Global feature toggle |
 | GET | `gcnavigation/api/v1/restaurant/{rid}` | Navigation menu config |
 | GET | `gcPermissionsAggregator/api/v2/contexts/urn:ot.restaurants:{rid}/principals/urn:ot.rest.users:{uid}/permissions` | User permissions |
+| GET | `restaurantAdminService/restaurant-admin/v3/restaurants/{rid}` | Admin restaurant details |
+| GET | `aggregator/restaurantProfileFeatures/{rid}` | Restaurant profile features |
+| GET | `product-activation/onboardingEventTracking/onboarding-status/v1/{rid}` | Onboarding status |
+| GET | `aggregator/reviewsummary/restaurant/{rid}/sevenday/v2?comparativeStartDate=...&comparativeEndDate=...` | 7-day review summary |
+| GET | `aggregator/reviewsummary/restaurant/{rid}?includeRatings=false` | Review summary (no ratings) |
+| GET | `rgsearch/api/v2/restaurants` | Restaurant search (multi-location) |
+| GET | `rgsearch/api/v2/groups?pageSize=5` | Restaurant groups |
+| POST | `gateway/api/account/switch/rid` | Switch active restaurant |
+| GET | `security/iamuserverification/api/v1/user/verification/urn:ot.restaurants:{rid}/self-service/supported` | User verification |
+| GET | `assistive-insights/bff/api/v1/restaurant/{rid}/notifications` | Insight notifications |
+| GET | `restaurantpartnerapigateway/salesforceProxyService/salesforce-data/v1/accounts/past-due/{rid}` | Salesforce billing status |
 
 ### Reservations
 
@@ -146,11 +158,17 @@ POST foh-web/gcFohWeb/api/{rid}/v2/reservations?disableVault=true
 - Generate `ReservationId` client-side with `crypto.randomUUID()`
 - `Scheduled` is UTC, `ScheduledLocal` is restaurant timezone
 
-#### Cancel Reservation
+#### Universal Reservation Update (PUT)
+
+All reservation modifications use the same endpoint:
 
 ```http
 PUT foh-web/gcFohWeb/api/{rid}/v2/reservations/{reservationId}
 ```
+
+Body is always wrapped in `{"reservation": {...}}`. You can update one or more fields per call.
+
+#### Cancel Reservation
 
 ```json
 {
@@ -166,19 +184,62 @@ PUT foh-web/gcFohWeb/api/{rid}/v2/reservations/{reservationId}
 }
 ```
 
-**Important:** State is `"Cancelled"` (British spelling with double L), NOT `"Canceled"`. Body is wrapped in `{"reservation": {...}}`.
+**Important:** State is `"Cancelled"` (British spelling with double L), NOT `"Canceled"`.
 
-#### Assign Referrer/Concierge to Reservation
+#### Change Reservation State
 
-```http
-PUT foh-web/gcFohWeb/api/{rid}/v2/reservations/{reservationId}
+```json
+{
+  "reservation": {
+    "State": "Confirmed",
+    "ReservationId": "<reservation-uuid>",
+    "CommandParameters": { "ModifiedBy": "<user-id>" }
+  }
+}
 ```
+
+#### Move Reservation (Change Time)
+
+```json
+{
+  "reservation": {
+    "Scheduled": "2026-11-03T03:15:00Z",
+    "ScheduledLocal": "2026-11-02T20:15:00",
+    "ReservationId": "<reservation-uuid>",
+    "CommandParameters": { "ModifiedBy": "<user-id>" }
+  }
+}
+```
+
+#### Change Party Size
+
+```json
+{
+  "reservation": {
+    "PartySize": 4,
+    "ReservationId": "<reservation-uuid>",
+    "CommandParameters": { "ModifiedBy": "<user-id>" }
+  }
+}
+```
+
+#### Add Visit Note
+
+```json
+{
+  "reservation": {
+    "VenueNotes": "Guest prefers corner table"
+  }
+}
+```
+
+#### Assign Referrer/Concierge
 
 ```json
 {
   "reservation": {
     "Referrer": {
-      "Id": 160258679806,
+      "Id": 180182759878,
       "FirstName": "John",
       "LastName": "Doe",
       "CompanyName": "Hotel Example",
@@ -195,16 +256,54 @@ PUT foh-web/gcFohWeb/api/{rid}/v2/reservations/{reservationId}
 }
 ```
 
+**Note:** Referrer `Id` is the `GlobalPersonId` from the referrers list endpoint.
+
 #### Available States
 
-| State | Description |
-|-------|-------------|
-| `NotConfirmed` | Initial state after creation |
-| `Confirmed` | Guest confirmed |
-| `Cancelled` | Reservation cancelled (British spelling) |
-| `MessageDelivered` | Confirmation message delivered |
-| `WrongNumber` | Phone number incorrect |
-| `NoAnswer` | No response from guest |
+| State | API Value | Set via API | Description |
+|-------|-----------|-------------|-------------|
+| Reservada | `NotConfirmed` | ✅ | Initial state after creation |
+| Confirmado | `Confirmed` | ✅ | Guest confirmed |
+| Cancelada | `Cancelled` | ✅ | Reservation cancelled (British spelling) |
+| Mensaje entregado | `MessageDelivered` | ❌ (400) | Requires real delivery event |
+| Número incorrecto | `WrongNumber` | ✅ | Phone number incorrect |
+| Sin respuesta | `NoAnswer` | ✅ | No response from guest |
+
+#### Reservation Response Fields (90+ fields)
+
+Key fields returned in every reservation response:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `ReservationId` | UUID | Unique reservation identifier |
+| `ConfirmationNumber` | int | Human-readable confirmation number |
+| `State` | string | Current reservation state |
+| `PartySize` | int | Number of guests |
+| `Scheduled` | ISO 8601 | UTC datetime |
+| `ScheduledLocal` | ISO 8601 | Local timezone datetime |
+| `Tables` | array | Assigned tables |
+| `GuestId` | UUID | Guest identifier |
+| `Guest` | object | Embedded guest data |
+| `Referrer` | object | Assigned concierge/referrer |
+| `Server` | string | Assigned server name |
+| `StaffId` | string | Assigned staff ID |
+| `AdditionalStaffIds` | array | Additional staff assigned |
+| `VenueNotes` | string | Visit notes |
+| `DinerNotes` | string | Guest's own notes |
+| `OpenTableNotes` | string | OT system notes |
+| `PartnerNotes` | string | Partner integration notes |
+| `Arrived` | datetime | When guest arrived |
+| `Seated` | datetime | When guest was seated |
+| `Departed` | datetime | When guest left |
+| `Completed` | datetime | When service completed |
+| `NoShow` | datetime | When marked no-show |
+| `MinutesLate` | int | How late the guest was |
+| `TurnTime` | int | Expected dining duration |
+| `DepositDetails` | object | Deposit/payment info |
+| `Tags` | array | Reservation tags |
+| `Origin` | string | Booking origin (PHONE, ONLINE, etc.) |
+| `CustomState` | object | Custom state configuration |
+| `PrivateDiningDetails` | object | Private event details |
 
 ### Guest Management
 
@@ -244,6 +343,45 @@ GET crm/guestProfile/api/v1/modular-guest-profile/restaurants/{rid}/guests/{gues
 
 ```http
 POST foh-web/gcFohWeb/api/{rid}/v1/guests/profiles/bulk?modules=contactMini,tags,notes
+```
+
+#### Guest Notes (General/Special/Food/Seating)
+
+```http
+POST crm/guestProfile/api/v1/modular-guest-profile/restaurants/{rid}/guests/{guestId}?modules=notes
+```
+
+Response:
+
+```json
+{
+  "guestId": "<uuid>",
+  "rid": 1264498,
+  "notes": [
+    {
+      "ownerId": 1264498,
+      "ownerName": "Restaurant Name",
+      "context": "Restaurant",
+      "editable": true,
+      "value": "Note text here",
+      "categories": ["general"]
+    }
+  ]
+}
+```
+
+Note categories: `general`, `special`, `foodAndDrink`, `seating`
+
+#### Guest Visit Spend
+
+```http
+GET foh-web/gcFohWeb/api/{rid}/reservation/{reservationId}/guest/{guestId}/visit-spend
+```
+
+#### Guest Group Profile
+
+```http
+GET fohAggregator/restaurant/{rid}/guest/{guestId}/groupProfile?fromRid={rid}
 ```
 
 #### Guest Tags Config
@@ -321,9 +459,61 @@ Returns all referrers/concierges configured for the restaurant. Can be hundreds 
 |--------|----------|-------------|
 | GET | `hospitality/ot4rFeedbackService/api/v1/entitlements/restaurant/{rid}` | Feedback entitlements |
 | POST | `hospitality/ot4rFeedbackBff/api/v1/feedback-reviews/restaurant/{rid}/options` | Review filter options |
-| POST | `hospitality/ot4rFeedbackService/api/v1/feedback/restaurant/{rid}/reviews/summary` | Reviews summary |
+| POST | `hospitality/ot4rFeedbackService/api/v1/feedback/restaurant/{rid}/reviews/summary` | Reviews summary (ratings, counts) |
 | POST | `hospitality/ot4rFeedbackService/api/v1/feedback/restaurant/{rid}/reviews/details` | Individual review details |
 | GET | `hospitality/ot4rFeedbackService/api/v2/feedback/restaurant/{rid}/aggregated-alerts?page=reviews` | Review alerts |
+
+#### Reviews Summary Response
+
+```json
+{
+  "totalCount": 237,
+  "averageOverallRating": 4.87,
+  "fiveStarCount": 220,
+  "fourStarCount": 9,
+  "threeStarCount": 5,
+  "twoStarCount": 1,
+  "oneStarCount": 2,
+  "otFoodRatingAvg": 4.77,
+  "otServiceRatingAvg": 4.81,
+  "otAmbianceRatingAvg": 4.88,
+  "otValueRatingAvg": 4.53
+}
+```
+
+#### Reviews Details Response
+
+Aggregates reviews from **Google**, **OpenTable**, and **TripAdvisor** in a single endpoint.
+
+```json
+{
+  "meta": { "totalCount": 27, "limit": 25, "pageNumber": 0, "hasReviews": true },
+  "data": [
+    {
+      "id": "RT-{rid}-{hash}",
+      "guestName": "John Doe",
+      "source": "Google",
+      "overallRating": 5.0,
+      "foodRating": 0.0,
+      "serviceRating": 0.0,
+      "ambianceRating": 0.0,
+      "comment": "Amazing food!",
+      "reviewDate": "2026-08-15T18:34:10Z",
+      "respondable": true,
+      "rtRespondable": true,
+      "businessResponseUrl": "https://www.google.com/maps/reviews/...",
+      "responses": [],
+      "privateNotes": "",
+      "tags": []
+    }
+  ]
+}
+```
+
+**Sources:** `"Google"`, `"OpenTable"`, `"TripAdvisor"`
+**`respondable`:** Can reply to this review
+**`rtRespondable`:** Can reply via ReviewTrackers (Google/TripAdvisor)
+**`businessResponseUrl`:** Direct link to reply on Google Maps
 
 ### Reporting / Analytics
 
@@ -388,6 +578,36 @@ Used for online/deposit bookings. Not required for internal (`Origin: "PHONE"`) 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `private-dining/entitlementFeatureService/api/v1/entitlement/restaurant/{rid}` | Private dining features/entitlements |
+| GET | `private-dining/restaurantDataService/restaurant-data/v1/restaurants/{rid}/products` | Private dining products |
+| GET | `private-dining/gcPermissionsAggregator/api/v2/contexts/urn:ot.restaurants:{rid}/principals/urn:ot.rest.users:{uid}/permissions` | Private dining permissions |
+
+### Referrer Data Structure
+
+Each referrer/concierge object from the referrers list:
+
+```json
+{
+  "GlobalPersonId": 180182759878,
+  "FirstName": "John",
+  "LastName": "Doe",
+  "CompanyName": "Hotel Example",
+  "IsActive": true,
+  "PhoneNumbers": [
+    {
+      "CountryCode": 0,
+      "CountryID": "MX",
+      "Number": "624 184 0319",
+      "PhoneNumberType": 0
+    }
+  ],
+  "Email": "",
+  "Rid": 1264498,
+  "UserType": 10,
+  "UpdatedUTC": "2024-02-27T02:52:28.942Z"
+}
+```
+
+**Note:** When assigning a referrer to a reservation, use `GlobalPersonId` as the `Id` field.
 
 ## GuestCenter Sections
 
